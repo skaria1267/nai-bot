@@ -587,40 +587,40 @@ async def panel_command(interaction: discord.Interaction):
         custom_id='save_button'
     )
 
-    # 自定义尺寸按钮
+    # 自定义尺寸按钮 - 分成两行
     width_decrease_button = discord.ui.Button(
         label='◀ 宽度-',
         style=discord.ButtonStyle.secondary,
         custom_id='width_decrease',
-        row=4
+        row=3
     )
 
     width_increase_button = discord.ui.Button(
         label='宽度+ ▶',
         style=discord.ButtonStyle.secondary,
         custom_id='width_increase',
-        row=4
+        row=3
     )
 
     height_decrease_button = discord.ui.Button(
         label='▼ 高度-',
         style=discord.ButtonStyle.secondary,
         custom_id='height_decrease',
-        row=4
+        row=3
     )
 
     height_increase_button = discord.ui.Button(
         label='高度+ ▲',
         style=discord.ButtonStyle.secondary,
         custom_id='height_increase',
-        row=4
+        row=3
     )
 
     custom_size_button = discord.ui.Button(
         label='📐 输入尺寸',
         style=discord.ButtonStyle.secondary,
         custom_id='custom_size_input',
-        row=4
+        row=3
     )
 
     # 创建视图
