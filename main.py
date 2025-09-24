@@ -104,16 +104,25 @@ MODELS = {
 
 class NovelAIBot(commands.Bot):
     def __init__(self):
+        print("Initializing NovelAIBot...", flush=True)
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(command_prefix='!', intents=intents)
+        print("NovelAIBot initialized", flush=True)
 
     async def setup_hook(self):
         print("Setting up bot commands...", flush=True)
-        # 添加预设命令组
-        self.tree.add_command(PresetGroup())
-        await self.tree.sync()
-        print('Commands synced successfully', flush=True)
+        try:
+            # 添加预设命令组
+            self.tree.add_command(PresetGroup())
+            print("Added PresetGroup command", flush=True)
+            # 同步命令
+            synced = await self.tree.sync()
+            print(f'Commands synced successfully! Synced {len(synced)} commands', flush=True)
+        except Exception as e:
+            print(f"Error in setup_hook: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
 
 bot = NovelAIBot()
 
@@ -1017,11 +1026,18 @@ if __name__ == '__main__':
         if sys.platform == 'win32':
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-        asyncio.run(main_async())
+        # 直接运行 bot
+        bot.run(DISCORD_TOKEN)
     except KeyboardInterrupt:
         print("Bot stopped by user", flush=True)
     except Exception as e:
         print(f"Failed to start bot: {e}", flush=True)
         import traceback
         traceback.print_exc()
+        # 在 Zeabur 环境中保持进程运行以查看错误
+        if os.getenv('ZEABUR'):
+            import time
+            while True:
+                time.sleep(60)
+                print(f"Waiting after error: {e}", flush=True)
         sys.exit(1)

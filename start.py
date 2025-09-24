@@ -64,7 +64,10 @@ else:
 
     try:
         # 导入并运行主程序
-        import main
+        import subprocess
+        import sys
+        result = subprocess.run([sys.executable, 'main.py'], capture_output=False, text=True)
+        sys.exit(result.returncode)
     except ImportError as e:
         print(f"❌ Failed to import main.py: {e}", flush=True)
         import traceback
