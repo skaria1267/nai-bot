@@ -65,6 +65,9 @@ is_generating = False
 # 面板状态缓存
 panel_states = {}
 
+# 尺寸步进值
+SIZE_STEP = 64
+
 # 尺寸限制
 SIZE_LIMITS = {
     'maxPixels': 832 * 1216,
@@ -465,6 +468,11 @@ async def panel_command(interaction: discord.Interaction):
         save_user_settings(user_settings)
 
     state = user_settings[user_id]
+    # 确保有自定义尺寸的默认值
+    if 'custom_width' not in state:
+        state['custom_width'] = 512
+    if 'custom_height' not in state:
+        state['custom_height'] = 768
     panel_states[user_id] = state
 
     # 构建面板
@@ -475,10 +483,27 @@ async def panel_command(interaction: discord.Interaction):
     )
 
     embed.add_field(name='模型', value=MODELS.get(state['model'], state['model']), inline=True)
-    embed.add_field(name='尺寸', value=state['size'], inline=True)
+
+    # 显示尺寸信息
+    if state['size'] == 'custom':
+        size_display = f"自定义: {state.get('custom_width', 512)}×{state.get('custom_height', 768)}"
+    else:
+        size_preset = SIZE_PRESETS.get(state['size'], {'width': 512, 'height': 768})
+        size_display = f"{state['size']} ({size_preset['width']}×{size_preset['height']})"
+
+    embed.add_field(name='尺寸', value=size_display, inline=True)
     embed.add_field(name='采样器', value=state['sampler'], inline=True)
     embed.add_field(name='预设', value=state.get('preset', '未选择'), inline=True)
     embed.add_field(name='清除元数据', value='✅ 开启' if state.get('remove_metadata', False) else '❌ 关闭', inline=True)
+
+    # 显示当前自定义尺寸
+    if state['size'] == 'custom':
+        pixels = state.get('custom_width', 512) * state.get('custom_height', 768)
+        embed.add_field(
+            name='📏 当前自定义尺寸',
+            value=f"宽度: {state.get('custom_width', 512)} | 高度: {state.get('custom_height', 768)} | 总像素: {pixels:,}",
+            inline=False
+        )
 
     # 创建选择菜单
     model_select = discord.ui.Select(
@@ -499,7 +524,8 @@ async def panel_command(interaction: discord.Interaction):
             discord.SelectOption(label='🖼️ 横图小 768×512', value='landscape_s', default='landscape_s'==state['size']),
             discord.SelectOption(label='⬜ 方图 512×512', value='square_s', default='square_s'==state['size']),
             discord.SelectOption(label='◻️ 方图 768×768', value='square_m', default='square_m'==state['size']),
-            discord.SelectOption(label='◼ 方图 832×832', value='square_l', default='square_l'==state['size'])
+            discord.SelectOption(label='◼ 方图 832×832', value='square_l', default='square_l'==state['size']),
+            discord.SelectOption(label='🔧 自定义尺寸', value='custom', default='custom'==state['size'])
         ],
         custom_id='size_select'
     )
@@ -552,6 +578,42 @@ async def panel_command(interaction: discord.Interaction):
         custom_id='save_button'
     )
 
+    # 自定义尺寸按钮
+    width_decrease_button = discord.ui.Button(
+        label='◀ 宽度-',
+        style=discord.ButtonStyle.secondary,
+        custom_id='width_decrease',
+        row=4
+    )
+
+    width_increase_button = discord.ui.Button(
+        label='宽度+ ▶',
+        style=discord.ButtonStyle.secondary,
+        custom_id='width_increase',
+        row=4
+    )
+
+    height_decrease_button = discord.ui.Button(
+        label='▼ 高度-',
+        style=discord.ButtonStyle.secondary,
+        custom_id='height_decrease',
+        row=4
+    )
+
+    height_increase_button = discord.ui.Button(
+        label='高度+ ▲',
+        style=discord.ButtonStyle.secondary,
+        custom_id='height_increase',
+        row=4
+    )
+
+    custom_size_button = discord.ui.Button(
+        label='📐 输入尺寸',
+        style=discord.ButtonStyle.secondary,
+        custom_id='custom_size_input',
+        row=4
+    )
+
     # 创建视图
     view = discord.ui.View(timeout=300)
     view.add_item(model_select)
@@ -561,6 +623,11 @@ async def panel_command(interaction: discord.Interaction):
     view.add_item(generate_button)
     view.add_item(metadata_button)
     view.add_item(save_button)
+    view.add_item(width_decrease_button)
+    view.add_item(width_increase_button)
+    view.add_item(height_decrease_button)
+    view.add_item(height_increase_button)
+    view.add_item(custom_size_button)
 
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
@@ -679,6 +746,10 @@ async def on_interaction(interaction: discord.Interaction):
             state['model'] = value
         elif field == 'size':
             state['size'] = value
+            # 如果选择了预设尺寸，更新自定义尺寸值
+            if value != 'custom' and value in SIZE_PRESETS:
+                state['custom_width'] = SIZE_PRESETS[value]['width']
+                state['custom_height'] = SIZE_PRESETS[value]['height']
         elif field == 'sampler':
             state['sampler'] = value
         elif field == 'preset':
@@ -694,6 +765,108 @@ async def on_interaction(interaction: discord.Interaction):
     elif custom_id == 'metadata_button':
         state['remove_metadata'] = not state.get('remove_metadata', False)
         await update_panel(interaction, state)
+
+    # 处理尺寸调整按钮
+    elif custom_id == 'width_decrease':
+        state['size'] = 'custom'
+        current_width = state.get('custom_width', 512)
+        state['custom_width'] = max(320, current_width - SIZE_STEP)
+        await update_panel(interaction, state)
+
+    elif custom_id == 'width_increase':
+        state['size'] = 'custom'
+        current_width = state.get('custom_width', 512)
+        current_height = state.get('custom_height', 768)
+        new_width = min(SIZE_LIMITS['maxWidth'], current_width + SIZE_STEP)
+        # 检查总像素限制
+        if new_width * current_height <= SIZE_LIMITS['maxPixels']:
+            state['custom_width'] = new_width
+        await update_panel(interaction, state)
+
+    elif custom_id == 'height_decrease':
+        state['size'] = 'custom'
+        current_height = state.get('custom_height', 768)
+        state['custom_height'] = max(320, current_height - SIZE_STEP)
+        await update_panel(interaction, state)
+
+    elif custom_id == 'height_increase':
+        state['size'] = 'custom'
+        current_width = state.get('custom_width', 512)
+        current_height = state.get('custom_height', 768)
+        new_height = min(SIZE_LIMITS['maxHeight'], current_height + SIZE_STEP)
+        # 检查总像素限制
+        if current_width * new_height <= SIZE_LIMITS['maxPixels']:
+            state['custom_height'] = new_height
+        await update_panel(interaction, state)
+
+    elif custom_id == 'custom_size_input':
+        # 弹出模态框输入自定义尺寸
+        modal = discord.ui.Modal(title='输入自定义尺寸')
+
+        width_input = discord.ui.TextInput(
+            label='宽度',
+            placeholder=f'输入宽度 (320-{SIZE_LIMITS["maxWidth"]})',
+            default=str(state.get('custom_width', 512)),
+            required=True,
+            max_length=4
+        )
+
+        height_input = discord.ui.TextInput(
+            label='高度',
+            placeholder=f'输入高度 (320-{SIZE_LIMITS["maxHeight"]})',
+            default=str(state.get('custom_height', 768)),
+            required=True,
+            max_length=4
+        )
+
+        modal.add_item(width_input)
+        modal.add_item(height_input)
+
+        async def size_modal_submit(modal_interaction: discord.Interaction):
+            try:
+                new_width = int(width_input.value)
+                new_height = int(height_input.value)
+
+                # 验证尺寸
+                if new_width < 320 or new_width > SIZE_LIMITS['maxWidth']:
+                    await modal_interaction.response.send_message(
+                        f"❌ 宽度必须在 320 到 {SIZE_LIMITS['maxWidth']} 之间",
+                        ephemeral=True
+                    )
+                    return
+
+                if new_height < 320 or new_height > SIZE_LIMITS['maxHeight']:
+                    await modal_interaction.response.send_message(
+                        f"❌ 高度必须在 320 到 {SIZE_LIMITS['maxHeight']} 之间",
+                        ephemeral=True
+                    )
+                    return
+
+                if new_width * new_height > SIZE_LIMITS['maxPixels']:
+                    await modal_interaction.response.send_message(
+                        f"❌ 总像素数不能超过 {SIZE_LIMITS['maxPixels']:,} ({SIZE_LIMITS['maxWidth']}×{SIZE_LIMITS['maxHeight']})",
+                        ephemeral=True
+                    )
+                    return
+
+                # 确保尺寸是64的倍数
+                new_width = (new_width // 64) * 64
+                new_height = (new_height // 64) * 64
+
+                state['size'] = 'custom'
+                state['custom_width'] = new_width
+                state['custom_height'] = new_height
+
+                await update_panel(modal_interaction, state)
+
+            except ValueError:
+                await modal_interaction.response.send_message(
+                    '❌ 请输入有效的数字',
+                    ephemeral=True
+                )
+
+        modal.on_submit = size_modal_submit
+        await interaction.response.send_modal(modal)
 
     elif custom_id == 'save_button':
         user_settings = load_user_settings()
@@ -737,7 +910,13 @@ async def on_interaction(interaction: discord.Interaction):
                         negative = f"{preset_data['negative']}, {negative}" if negative else preset_data['negative']
 
             # 获取尺寸
-            size_data = SIZE_PRESETS.get(state['size'], SIZE_PRESETS['portrait_s'])
+            if state['size'] == 'custom':
+                width = state.get('custom_width', 512)
+                height = state.get('custom_height', 768)
+            else:
+                size_data = SIZE_PRESETS.get(state['size'], SIZE_PRESETS['portrait_s'])
+                width = size_data['width']
+                height = size_data['height']
 
             # 准备任务
             task = {
@@ -746,8 +925,8 @@ async def on_interaction(interaction: discord.Interaction):
                     'prompt': prompt,
                     'negative_prompt': negative,
                     'model': state['model'],
-                    'width': size_data['width'],
-                    'height': size_data['height'],
+                    'width': width,
+                    'height': height,
                     'sampler': state['sampler'],
                     'steps': 28,
                     'cfg': 5,
@@ -780,10 +959,27 @@ async def update_panel(interaction: discord.Interaction, state: Dict):
     )
 
     embed.add_field(name='模型', value=MODELS.get(state['model'], state['model']), inline=True)
-    embed.add_field(name='尺寸', value=state['size'], inline=True)
+
+    # 显示尺寸信息
+    if state['size'] == 'custom':
+        size_display = f"自定义: {state.get('custom_width', 512)}×{state.get('custom_height', 768)}"
+    else:
+        size_preset = SIZE_PRESETS.get(state['size'], {'width': 512, 'height': 768})
+        size_display = f"{state['size']} ({size_preset['width']}×{size_preset['height']})"
+
+    embed.add_field(name='尺寸', value=size_display, inline=True)
     embed.add_field(name='采样器', value=state['sampler'], inline=True)
     embed.add_field(name='预设', value=state.get('preset', '未选择'), inline=True)
     embed.add_field(name='清除元数据', value='✅ 开启' if state.get('remove_metadata', False) else '❌ 关闭', inline=True)
+
+    # 显示当前自定义尺寸
+    if state['size'] == 'custom':
+        pixels = state.get('custom_width', 512) * state.get('custom_height', 768)
+        embed.add_field(
+            name='📏 当前自定义尺寸',
+            value=f"宽度: {state.get('custom_width', 512)} | 高度: {state.get('custom_height', 768)} | 总像素: {pixels:,}",
+            inline=False
+        )
 
     await interaction.response.edit_message(embed=embed)
 
