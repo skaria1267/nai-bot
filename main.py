@@ -514,14 +514,15 @@ async def panel_command(interaction: discord.Interaction):
             inline=False
         )
 
-    # 创建选择菜单
+    # 创建选择菜单 - 每个Select占整行
     model_select = discord.ui.Select(
         placeholder='选择模型',
         options=[
             discord.SelectOption(label=name, value=value, default=value==state['model'])
             for value, name in MODELS.items()
         ],
-        custom_id='model_select'
+        custom_id='model_select',
+        row=0
     )
 
     size_select = discord.ui.Select(
@@ -536,7 +537,8 @@ async def panel_command(interaction: discord.Interaction):
             discord.SelectOption(label='◼ 方图 832×832', value='square_l', default='square_l'==state['size']),
             discord.SelectOption(label='🔧 自定义尺寸', value='custom', default='custom'==state['size'])
         ],
-        custom_id='size_select'
+        custom_id='size_select',
+        row=1
     )
 
     sampler_select = discord.ui.Select(
@@ -549,7 +551,8 @@ async def panel_command(interaction: discord.Interaction):
             discord.SelectOption(label='DPM++ SDE', value='k_dpmpp_sde', default='k_dpmpp_sde'==state['sampler']),
             discord.SelectOption(label='DDIM V3', value='ddim_v3', default='ddim_v3'==state['sampler'])
         ],
-        custom_id='sampler_select'
+        custom_id='sampler_select',
+        row=2
     )
 
     # 创建预设选择菜单
@@ -565,86 +568,51 @@ async def panel_command(interaction: discord.Interaction):
     preset_select = discord.ui.Select(
         placeholder='选择预设',
         options=preset_options,
-        custom_id='preset_select'
+        custom_id='preset_select',
+        row=3
     )
 
-    # 创建按钮 - 第2行
+    # 创建按钮 - 第4行：主要操作和尺寸调整
     generate_button = discord.ui.Button(
         label='🎨 生成图片',
         style=discord.ButtonStyle.primary,
         custom_id='generate_button',
-        row=2
+        row=4
     )
 
     metadata_button = discord.ui.Button(
-        label='🔄 切换元数据清除',
+        label='🔄 元数据清除',
         style=discord.ButtonStyle.secondary,
         custom_id='metadata_button',
-        row=2
+        row=4
     )
 
     save_button = discord.ui.Button(
         label='💾 保存设置',
         style=discord.ButtonStyle.success,
         custom_id='save_button',
-        row=2
-    )
-
-    # 自定义尺寸按钮 - 第3行和第4行
-    width_decrease_button = discord.ui.Button(
-        label='◀ 宽-',
-        style=discord.ButtonStyle.secondary,
-        custom_id='width_decrease',
-        row=3
-    )
-
-    width_increase_button = discord.ui.Button(
-        label='宽+ ▶',
-        style=discord.ButtonStyle.secondary,
-        custom_id='width_increase',
-        row=3
-    )
-
-    custom_size_button = discord.ui.Button(
-        label='📐 输入尺寸',
-        style=discord.ButtonStyle.primary,
-        custom_id='custom_size_input',
-        row=3
-    )
-
-    height_decrease_button = discord.ui.Button(
-        label='▼ 高-',
-        style=discord.ButtonStyle.secondary,
-        custom_id='height_decrease',
         row=4
     )
 
-    height_increase_button = discord.ui.Button(
-        label='高+ ▲',
+    custom_size_button = discord.ui.Button(
+        label='📐 自定义尺寸',
         style=discord.ButtonStyle.secondary,
-        custom_id='height_increase',
+        custom_id='custom_size_input',
         row=4
     )
 
     # 创建视图
     view = discord.ui.View(timeout=300)
-    # 第0行 - Select菜单会自动放在第一行
-    view.add_item(model_select)
-    view.add_item(size_select)
-    # 第1行 - Select菜单会自动放在第二行
-    view.add_item(sampler_select)
-    view.add_item(preset_select)
-    # 第2行 - 主要操作按钮
+    # 添加Select菜单
+    view.add_item(model_select)    # row 0
+    view.add_item(size_select)     # row 1
+    view.add_item(sampler_select)  # row 2
+    view.add_item(preset_select)   # row 3
+    # 添加按钮 - 第4行
     view.add_item(generate_button)
     view.add_item(metadata_button)
     view.add_item(save_button)
-    # 第3行 - 宽度调整
-    view.add_item(width_decrease_button)
-    view.add_item(width_increase_button)
     view.add_item(custom_size_button)
-    # 第4行 - 高度调整
-    view.add_item(height_decrease_button)
-    view.add_item(height_increase_button)
 
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
@@ -783,39 +751,7 @@ async def on_interaction(interaction: discord.Interaction):
         state['remove_metadata'] = not state.get('remove_metadata', False)
         await update_panel(interaction, state)
 
-    # 处理尺寸调整按钮
-    elif custom_id == 'width_decrease':
-        state['size'] = 'custom'
-        current_width = state.get('custom_width', 512)
-        state['custom_width'] = max(320, current_width - SIZE_STEP)
-        await update_panel(interaction, state)
-
-    elif custom_id == 'width_increase':
-        state['size'] = 'custom'
-        current_width = state.get('custom_width', 512)
-        current_height = state.get('custom_height', 768)
-        new_width = min(SIZE_LIMITS['maxWidth'], current_width + SIZE_STEP)
-        # 检查总像素限制
-        if new_width * current_height <= SIZE_LIMITS['maxPixels']:
-            state['custom_width'] = new_width
-        await update_panel(interaction, state)
-
-    elif custom_id == 'height_decrease':
-        state['size'] = 'custom'
-        current_height = state.get('custom_height', 768)
-        state['custom_height'] = max(320, current_height - SIZE_STEP)
-        await update_panel(interaction, state)
-
-    elif custom_id == 'height_increase':
-        state['size'] = 'custom'
-        current_width = state.get('custom_width', 512)
-        current_height = state.get('custom_height', 768)
-        new_height = min(SIZE_LIMITS['maxHeight'], current_height + SIZE_STEP)
-        # 检查总像素限制
-        if current_width * new_height <= SIZE_LIMITS['maxPixels']:
-            state['custom_height'] = new_height
-        await update_panel(interaction, state)
-
+    # 处理自定义尺寸输入按钮
     elif custom_id == 'custom_size_input':
         # 弹出模态框输入自定义尺寸
         modal = discord.ui.Modal(title='输入自定义尺寸')
