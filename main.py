@@ -568,75 +568,83 @@ async def panel_command(interaction: discord.Interaction):
         custom_id='preset_select'
     )
 
-    # 创建按钮
+    # 创建按钮 - 第2行
     generate_button = discord.ui.Button(
         label='🎨 生成图片',
         style=discord.ButtonStyle.primary,
-        custom_id='generate_button'
+        custom_id='generate_button',
+        row=2
     )
 
     metadata_button = discord.ui.Button(
         label='🔄 切换元数据清除',
         style=discord.ButtonStyle.secondary,
-        custom_id='metadata_button'
+        custom_id='metadata_button',
+        row=2
     )
 
     save_button = discord.ui.Button(
         label='💾 保存设置',
         style=discord.ButtonStyle.success,
-        custom_id='save_button'
+        custom_id='save_button',
+        row=2
     )
 
-    # 自定义尺寸按钮 - 分成两行
+    # 自定义尺寸按钮 - 第3行和第4行
     width_decrease_button = discord.ui.Button(
-        label='◀ 宽度-',
+        label='◀ 宽-',
         style=discord.ButtonStyle.secondary,
         custom_id='width_decrease',
         row=3
     )
 
     width_increase_button = discord.ui.Button(
-        label='宽度+ ▶',
+        label='宽+ ▶',
         style=discord.ButtonStyle.secondary,
         custom_id='width_increase',
         row=3
     )
 
-    height_decrease_button = discord.ui.Button(
-        label='▼ 高度-',
-        style=discord.ButtonStyle.secondary,
-        custom_id='height_decrease',
-        row=3
-    )
-
-    height_increase_button = discord.ui.Button(
-        label='高度+ ▲',
-        style=discord.ButtonStyle.secondary,
-        custom_id='height_increase',
-        row=3
-    )
-
     custom_size_button = discord.ui.Button(
         label='📐 输入尺寸',
-        style=discord.ButtonStyle.secondary,
+        style=discord.ButtonStyle.primary,
         custom_id='custom_size_input',
         row=3
     )
 
+    height_decrease_button = discord.ui.Button(
+        label='▼ 高-',
+        style=discord.ButtonStyle.secondary,
+        custom_id='height_decrease',
+        row=4
+    )
+
+    height_increase_button = discord.ui.Button(
+        label='高+ ▲',
+        style=discord.ButtonStyle.secondary,
+        custom_id='height_increase',
+        row=4
+    )
+
     # 创建视图
     view = discord.ui.View(timeout=300)
+    # 第0行 - Select菜单会自动放在第一行
     view.add_item(model_select)
     view.add_item(size_select)
+    # 第1行 - Select菜单会自动放在第二行
     view.add_item(sampler_select)
     view.add_item(preset_select)
+    # 第2行 - 主要操作按钮
     view.add_item(generate_button)
     view.add_item(metadata_button)
     view.add_item(save_button)
+    # 第3行 - 宽度调整
     view.add_item(width_decrease_button)
     view.add_item(width_increase_button)
+    view.add_item(custom_size_button)
+    # 第4行 - 高度调整
     view.add_item(height_decrease_button)
     view.add_item(height_increase_button)
-    view.add_item(custom_size_button)
 
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
