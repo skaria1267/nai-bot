@@ -82,9 +82,7 @@ docker run -d \
 3. 配置环境变量：
    - `DISCORD_TOKEN` - Discord机器人令牌
    - `NAI_API_KEY` - NovelAI API密钥
-4. 部署（会自动检测为Python项目）
-
-注意：如果看不到日志，检查Zeabur的"Runtime Logs"选项卡
+4. 部署
 
 ## 📝 命令使用
 
