@@ -504,7 +504,7 @@ async def nai_command(
     task_queue.append(task)
     queue_position = len(task_queue)
 
-    logger.info(f"[队列添加] 用户: {interaction.user} (ID: {interaction.user.id}) | 提示词: {prompt[:50]}... | 队列位置: {queue_position}")
+    logger.info(f"[队列添加] 用户: {interaction.user} (ID: {interaction.user.id}) | 队列位置: {queue_position}")
 
     await interaction.response.send_message(
         f'✅ 您的请求已加入队列，当前排在第 {queue_position} 位。',
@@ -984,7 +984,7 @@ async def on_interaction(interaction: discord.Interaction):
             task_queue.append(task)
             queue_position = len(task_queue)
 
-            logger.info(f"[队列添加-面板] 用户: {modal_interaction.user} (ID: {modal_interaction.user.id}) | 提示词: {prompt[:50]}... | 队列位置: {queue_position}")
+            logger.info(f"[队列添加-面板] 用户: {modal_interaction.user} (ID: {modal_interaction.user.id}) | 队列位置: {queue_position}")
 
             await modal_interaction.response.send_message(
                 f'✅ 您的请求已加入队列，当前排在第 {queue_position} 位。',
