@@ -8,6 +8,9 @@ import json
 import random
 import io
 import zipfile
+import asyncio
+import logging
+from datetime import datetime
 from typing import Dict, Optional, Any
 from collections import deque
 import discord
@@ -17,6 +20,16 @@ import aiohttp
 from dotenv import load_dotenv
 from utils import load_presets, save_presets, load_user_settings, save_user_settings
 from image_processor import process_image_metadata
+
+# 配置日志系统
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # 配置日志 - 直接输出到stdout，无缓冲
 print("=" * 50, flush=True)
@@ -61,6 +74,7 @@ print("Configuration OK, starting bot...", flush=True)
 # 任务队列
 task_queue = deque()
 is_generating = False
+queue_lock = asyncio.Lock()  # 添加队列锁以防止竞态条件
 
 # 面板状态缓存
 panel_states = {}
@@ -173,6 +187,8 @@ async def generate_image(params: Dict[str, Any]) -> tuple[bytes, int]:
     import zipfile
     import io
 
+    logger.debug(f"生成参数: model={params['model']}, size={params['width']}x{params['height']}, steps={params.get('steps', 28)}")
+
     prompt = params['prompt']
     negative_prompt = params.get('negative_prompt', '')
     model = params['model']
@@ -253,6 +269,7 @@ async def generate_image(params: Dict[str, Any]) -> tuple[bytes, int]:
                 timeout=aiohttp.ClientTimeout(total=60)
             ) as response:
                 if response.status == 200:
+                    logger.debug(f"API响应成功，开始处理图片数据")
                     zip_data = await response.read()
 
                     # 解压ZIP文件
@@ -261,9 +278,11 @@ async def generate_image(params: Dict[str, Any]) -> tuple[bytes, int]:
                         for filename in zip_file.namelist():
                             if filename.endswith('.png'):
                                 image_data = zip_file.read(filename)
+                                logger.debug(f"找到图片文件: {filename}, 大小: {len(image_data)/1024:.2f} KB")
 
                                 # 如果需要清除元数据
                                 if remove_metadata:
+                                    logger.debug(f"正在清除元数据...")
                                     image_data = process_image_metadata(image_data)
 
                                 return image_data, actual_seed
@@ -272,7 +291,7 @@ async def generate_image(params: Dict[str, Any]) -> tuple[bytes, int]:
 
                 # V4模型500错误时重试
                 elif response.status == 500 and model.startswith('nai-diffusion-4'):
-                    print(f"V4 model 500 error, retrying with simplified params", flush=True)
+                    logger.warning(f"V4模型500错误，尝试使用简化参数重试")
 
                     # 移除V4特殊字段重试
                     if 'v4_prompt' in base_params:
@@ -304,53 +323,86 @@ async def generate_image(params: Dict[str, Any]) -> tuple[bytes, int]:
                     raise Exception(f'API Error: {response.status} - {error_text}')
 
         except aiohttp.ClientError as e:
-            raise Exception(f'Network error: {str(e)}')
+            logger.error(f"网络错误: {str(e)}")
+            raise Exception(f'网络错误: {str(e)}')
         except Exception as e:
+            logger.error(f"生成图片失败: {str(e)}")
             raise e
 
 async def process_queue():
     """处理任务队列"""
     global is_generating
 
-    while task_queue:
-        if not is_generating:
-            is_generating = True
-            try:
-                task = task_queue.popleft()
-                interaction = task['interaction']
-                params = task['params']
+    async with queue_lock:
+        if is_generating or not task_queue:
+            return
 
-                # 生成图片
-                image_data, seed = await generate_image(params)
+        is_generating = True
+        task = task_queue.popleft()
 
-                # 发送图片
-                file = discord.File(
-                    fp=io.BytesIO(image_data),
-                    filename=f'nai_{seed}.png'
-                )
+    interaction = task['interaction']
+    params = task['params']
+    user_id = interaction.user.id
+    user_name = str(interaction.user)
+    start_time = datetime.now()
 
-                embed = discord.Embed(
-                    title='✅ 生成完成',
-                    color=discord.Color.green()
-                )
-                embed.add_field(name='Seed', value=str(seed), inline=True)
-                embed.add_field(name='Model', value=MODELS.get(params['model'], params['model']), inline=True)
-                embed.add_field(name='Size', value=f"{params['width']}x{params['height']}", inline=True)
-                if params.get('remove_metadata'):
-                    embed.add_field(name='元数据', value='已清除', inline=True)
+    logger.info(f"[生成开始] 用户: {user_name} (ID: {user_id}) | 模型: {params['model']} | 尺寸: {params['width']}x{params['height']} | 队列剩余: {len(task_queue)}")
 
-                await interaction.followup.send(embed=embed, file=file)
+    try:
+        # 设置超时时间为90秒
+        async with asyncio.timeout(90):
+            # 生成图片
+            logger.info(f"[API调用] 用户: {user_name} | 正在调用NovelAI API...")
+            image_data, seed = await generate_image(params)
 
-            except Exception as e:
-                if 'interaction' in locals():
-                    error_embed = discord.Embed(
-                        title='❌ 生成失败',
-                        description=str(e),
-                        color=discord.Color.red()
-                    )
-                    await interaction.followup.send(embed=error_embed)
-            finally:
-                is_generating = False
+            # 发送图片
+            file = discord.File(
+                fp=io.BytesIO(image_data),
+                filename=f'nai_{seed}.png'
+            )
+
+            embed = discord.Embed(
+                title='✅ 生成完成',
+                color=discord.Color.green()
+            )
+            embed.add_field(name='Seed', value=str(seed), inline=True)
+            embed.add_field(name='Model', value=MODELS.get(params['model'], params['model']), inline=True)
+            embed.add_field(name='Size', value=f"{params['width']}x{params['height']}", inline=True)
+            if params.get('remove_metadata'):
+                embed.add_field(name='元数据', value='已清除', inline=True)
+
+            await interaction.followup.send(embed=embed, file=file)
+
+            elapsed_time = (datetime.now() - start_time).total_seconds()
+            logger.info(f"[生成成功] 用户: {user_name} | Seed: {seed} | 耗时: {elapsed_time:.2f}秒 | 队列剩余: {len(task_queue)}")
+
+    except asyncio.TimeoutError:
+        logger.error(f"[生成超时] 用户: {user_name} | 超过90秒未响应")
+        error_embed = discord.Embed(
+            title='❌ 生成超时',
+            description='生成请求超过90秒未响应，请稍后重试',
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=error_embed)
+
+    except Exception as e:
+        logger.error(f"[生成失败] 用户: {user_name} | 错误: {str(e)}")
+        error_embed = discord.Embed(
+            title='❌ 生成失败',
+            description=str(e),
+            color=discord.Color.red()
+        )
+        try:
+            await interaction.followup.send(embed=error_embed)
+        except:
+            logger.error(f"[发送失败] 无法向用户 {user_name} 发送错误消息")
+
+    finally:
+        is_generating = False
+        # 继续处理队列中的下一个任务
+        if task_queue:
+            logger.info(f"[队列处理] 继续处理队列，剩余任务: {len(task_queue)}")
+            asyncio.create_task(process_queue())
 
 @bot.tree.command(name='nai', description='使用NovelAI生成图片')
 @app_commands.describe(
@@ -452,6 +504,8 @@ async def nai_command(
     task_queue.append(task)
     queue_position = len(task_queue)
 
+    logger.info(f"[队列添加] 用户: {interaction.user} (ID: {interaction.user.id}) | 提示词: {prompt[:50]}... | 队列位置: {queue_position}")
+
     await interaction.response.send_message(
         f'✅ 您的请求已加入队列，当前排在第 {queue_position} 位。',
         ephemeral=True
@@ -460,9 +514,42 @@ async def nai_command(
     # 处理队列
     asyncio.create_task(process_queue())
 
+@bot.tree.command(name='queue', description='查看当前队列状态')
+async def queue_command(interaction: discord.Interaction):
+    if not task_queue:
+        await interaction.response.send_message('💭 当前队列为空', ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title='📋 队列状态',
+        description=f'当前有 {len(task_queue)} 个任务在队列中',
+        color=discord.Color.blue()
+    )
+
+    if is_generating:
+        embed.add_field(name='状态', value='🎨 正在生成中...', inline=False)
+    else:
+        embed.add_field(name='状态', value='✅ 空闲中', inline=False)
+
+    # 显示队列中的前5个任务
+    queue_list = list(task_queue)[:5]
+    for i, task in enumerate(queue_list, 1):
+        user_name = task['interaction'].user.name
+        model = MODELS.get(task['params']['model'], task['params']['model'])
+        embed.add_field(
+            name=f'位置 {i}',
+            value=f'用户: {user_name}\n模型: {model}',
+            inline=True
+        )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 @bot.tree.command(name='panel', description='打开一个交互式绘图面板')
 async def panel_command(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
+    user_name = str(interaction.user)
+    logger.info(f"[面板打开] 用户: {user_name} (ID: {user_id})")
+
     user_settings = load_user_settings()
 
     # 获取或创建用户设置
@@ -715,6 +802,9 @@ async def on_interaction(interaction: discord.Interaction):
 
     custom_id = interaction.data.get('custom_id', '')
     user_id = str(interaction.user.id)
+    user_name = str(interaction.user)
+
+    logger.debug(f"[面板交互] 用户: {user_name} | 组件: {custom_id}")
 
     if user_id not in panel_states:
         await interaction.response.send_message('会话已过期，请重新打开面板', ephemeral=True)
@@ -825,6 +915,7 @@ async def on_interaction(interaction: discord.Interaction):
         user_settings = load_user_settings()
         user_settings[user_id] = state
         save_user_settings(user_settings)
+        logger.info(f"[设置保存] 用户: {user_name} 保存了面板设置")
         await interaction.response.send_message('✅ 设置已保存！', ephemeral=True)
 
     elif custom_id == 'generate_button':
@@ -893,6 +984,8 @@ async def on_interaction(interaction: discord.Interaction):
             task_queue.append(task)
             queue_position = len(task_queue)
 
+            logger.info(f"[队列添加-面板] 用户: {modal_interaction.user} (ID: {modal_interaction.user.id}) | 提示词: {prompt[:50]}... | 队列位置: {queue_position}")
+
             await modal_interaction.response.send_message(
                 f'✅ 您的请求已加入队列，当前排在第 {queue_position} 位。',
                 ephemeral=True
@@ -938,9 +1031,11 @@ async def update_panel(interaction: discord.Interaction, state: Dict):
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user} (ID: {bot.user.id})', flush=True)
-    print(f'Connected to {len(bot.guilds)} guilds', flush=True)
-    print('Bot is ready!', flush=True)
+    logger.info(f'[Bot启动] 登录为: {bot.user} (ID: {bot.user.id})')
+    logger.info(f'[Bot启动] 连接到 {len(bot.guilds)} 个服务器')
+    for guild in bot.guilds:
+        logger.info(f'  - {guild.name} (ID: {guild.id}) | 成员数: {guild.member_count}')
+    logger.info('[Bot启动] Bot准备就绪!')
 
     # 设置状态
     await bot.change_presence(
@@ -953,16 +1048,28 @@ async def on_ready():
 # 处理错误
 @bot.event
 async def on_error(event, *args, **kwargs):
-    print(f'Error in {event}:', sys.exc_info(), flush=True)
+    logger.error(f'事件 {event} 中发生错误: {sys.exc_info()}')
+
+async def queue_cleanup_task():
+    """定期清理过期队列任务"""
+    while True:
+        await asyncio.sleep(300)  # 每5分钟检查一次
+        if len(task_queue) > 10:
+            logger.warning(f"[队列警告] 队列过长，当前有 {len(task_queue)} 个任务")
+        if not is_generating and task_queue:
+            logger.info(f"[队列检查] 检测到队列未处理，尝试重启队列处理")
+            asyncio.create_task(process_queue())
 
 async def main_async():
     """异步主函数"""
     async with bot:
+        # 启动队列清理任务
+        asyncio.create_task(queue_cleanup_task())
         await bot.start(DISCORD_TOKEN)
 
 if __name__ == '__main__':
-    print("Starting bot...", flush=True)
-    print(f"Token length: {len(DISCORD_TOKEN) if DISCORD_TOKEN else 0}", flush=True)
+    logger.info("正在启动Bot...")
+    logger.info(f"Token长度: {len(DISCORD_TOKEN) if DISCORD_TOKEN else 0}")
 
     try:
         import asyncio
@@ -970,12 +1077,16 @@ if __name__ == '__main__':
         if sys.platform == 'win32':
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-        # 直接运行 bot
-        bot.run(DISCORD_TOKEN)
+        # 添加优雅关闭处理
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # 直接运行 bot，启用重连
+        bot.run(DISCORD_TOKEN, reconnect=True, log_handler=None)
     except KeyboardInterrupt:
-        print("Bot stopped by user", flush=True)
+        logger.info("用户停止了Bot")
     except Exception as e:
-        print(f"Failed to start bot: {e}", flush=True)
+        logger.error(f"启动Bot失败: {e}")
         import traceback
         traceback.print_exc()
         # 在 Zeabur 环境中保持进程运行以查看错误
